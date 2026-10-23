@@ -1,131 +1,302 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport"
-        content="width=device-width, initial-scale=1">
-  <title>KindleDraw — Input Test</title>
+        content="width=device-width, initial-scale=1,
+                 maximum-scale=1, user-scalable=no">
+  <title>KindleDraw</title>
+
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: white;
-      color: black;
-      font: 16px sans-serif;
+    * {
+      box-sizing: border-box;
     }
-    header {
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+      color: #000;
+      font-family: sans-serif;
+    }
+
+    #toolbar {
+      height: 48px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px;
-      border-bottom: 1px solid black;
+      padding: 0 10px;
+      border-bottom: 1px solid #000;
+      background: #fff;
     }
-    button {
-      background: white;
-      color: black;
-      border: 1px solid black;
-      padding: 10px 16px;
+
+    #brand {
       font-size: 16px;
+      font-weight: bold;
     }
+
+    button {
+      height: 36px;
+      min-width: 64px;
+      padding: 0 12px;
+      border: 1px solid #000;
+      border-radius: 0;
+      background: #fff;
+      color: #000;
+      font-size: 15px;
+      touch-action: manipulation;
+    }
+
     #status {
-      padding: 8px 10px;
-      font-size: 13px;
+      height: 26px;
+      padding: 5px 10px;
+      font-size: 12px;
+      border-bottom: 1px solid #ddd;
+      background: #fff;
     }
-    canvas {
+
+    #board {
       display: block;
       width: 100%;
-      height: calc(100vh - 105px);
+      height: calc(100% - 74px);
+      background: #fff;
       touch-action: none;
-      background: white;
+      user-select: none;
+      -webkit-user-select: none;
     }
   </style>
 </head>
+
 <body>
-  <header>
-    <strong>KindleDraw</strong>
-    <button id="clear">Clear</button>
+  <header id="toolbar">
+    <span id="brand">KindleDraw</span>
+    <button id="clear" type="button">Clear</button>
   </header>
-  <div id="status">Touch or use your pen to draw.</div>
+
+  <div id="status">Ready to draw.</div>
   <canvas id="board"></canvas>
 
   <script>
-    const canvas = document.querySelector("#board");
-    const ctx = canvas.getContext("2d");
-    const status = document.querySelector("#status");
+    (() => {
+      "use strict";
 
-    let drawing = false;
-    let previous = null;
+      const canvas = document.getElementById("board");
+      const ctx = canvas.getContext("2d", {
+        alpha: false
+      });
+      const status = document.getElementById("status");
+      const clearButton = document.getElementById("clear");
 
-    function resize() {
-      const old = document.createElement("canvas");
-      old.width = canvas.width;
-      old.height = canvas.height;
-      old.getContext("2d").drawImage(canvas, 0, 0);
+      let drawing = false;
+      let activePointer = null;
+      let lastPoint = null;
+      let lastMidpoint = null;
+      let strokeCount = 0;
+      let lastStatusUpdate = 0;
 
-      const rect = canvas.getBoundingClientRect();
-      const scale = Math.min(window.devicePixelRatio || 1, 2);
+      function configureContext() {
+        ctx.strokeStyle = "#000";
+        ctx.fillStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+      }
 
-      canvas.width = Math.round(rect.width * scale);
-      canvas.height = Math.round(rect.height * scale);
+      function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        const ratio = Math.min(
+          window.devicePixelRatio || 1,
+          2
+        );
 
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(old, 0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = "black";
-      ctx.lineWidth = 2 * scale;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-    }
+        const width = Math.max(1, Math.round(rect.width * ratio));
+        const height = Math.max(1, Math.round(rect.height * ratio));
 
-    function point(e) {
-      const rect = canvas.getBoundingClientRect();
-      const scale = canvas.width / rect.width;
-      return {
-        x: (e.clientX - rect.left) * scale,
-        y: (e.clientY - rect.top) * scale
-      };
-    }
+        if (canvas.width === width &&
+            canvas.height === height) {
+          return;
+        }
 
-    canvas.addEventListener("pointerdown", e => {
-      e.preventDefault();
-      drawing = true;
-      previous = point(e);
-      canvas.setPointerCapture(e.pointerId);
+        // Preserve the existing drawing when resizing.
+        const old = document.createElement("canvas");
+        old.width = canvas.width;
+        old.height = canvas.height;
 
-      status.textContent =
-        "Input detected: " + e.pointerType +
-        (e.pressure ? " | pressure: " +
-          e.pressure.toFixed(2) : "");
-    });
+        if (old.width && old.height) {
+          old.getContext("2d").drawImage(canvas, 0, 0);
+        }
 
-    canvas.addEventListener("pointermove", e => {
-      if (!drawing) return;
-      e.preventDefault();
+        canvas.width = width;
+        canvas.height = height;
 
-      const p = point(e);
-      ctx.beginPath();
-      ctx.moveTo(previous.x, previous.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-      previous = p;
-    });
+        // Draw in CSS pixels for consistent line widths.
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        configureContext();
+        ctx.fillRect(0, 0, rect.width, rect.height);
 
-    function stop() {
-      drawing = false;
-      previous = null;
-    }
+        if (old.width && old.height) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(
+            old, 0, 0, old.width, old.height,
+            0, 0, width, height
+          );
+          ctx.restore();
+          ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+          configureContext();
+        }
+      }
 
-    canvas.addEventListener("pointerup", stop);
-    canvas.addEventListener("pointercancel", stop);
+      function getPoint(event) {
+        const rect = canvas.getBoundingClientRect();
 
-    document.querySelector("#clear").onclick = () => {
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      status.textContent = "Canvas cleared.";
-    };
+        return {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        };
+      }
 
-    window.addEventListener("resize", resize);
-    resize();
+      function midpoint(a, b) {
+        return {
+          x: (a.x + b.x) / 2,
+          y: (a.y + b.y) / 2
+        };
+      }
+
+      // Smooth sparse input using quadratic Bézier curves.
+      function addPoint(point) {
+        if (!lastPoint) {
+          lastPoint = point;
+          lastMidpoint = point;
+          return;
+        }
+
+        const mid = midpoint(lastPoint, point);
+
+        ctx.beginPath();
+        ctx.moveTo(lastMidpoint.x, lastMidpoint.y);
+        ctx.quadraticCurveTo(
+          lastPoint.x,
+          lastPoint.y,
+          mid.x,
+          mid.y
+        );
+        ctx.stroke();
+
+        lastPoint = point;
+        lastMidpoint = mid;
+      }
+
+      function finishStroke() {
+        if (lastPoint && lastMidpoint) {
+          ctx.beginPath();
+          ctx.moveTo(lastMidpoint.x, lastMidpoint.y);
+          ctx.quadraticCurveTo(
+            lastPoint.x,
+            lastPoint.y,
+            lastPoint.x,
+            lastPoint.y
+          );
+          ctx.stroke();
+        }
+
+        drawing = false;
+        activePointer = null;
+        lastPoint = null;
+        lastMidpoint = null;
+        strokeCount++;
+
+        status.textContent =
+          "Ready | Strokes: " + strokeCount;
+      }
+
+      canvas.addEventListener("pointerdown", event => {
+        if (drawing) return;
+
+        event.preventDefault();
+        drawing = true;
+        activePointer = event.pointerId;
+
+        try {
+          canvas.setPointerCapture(event.pointerId);
+        } catch (_) {}
+
+        lastPoint = null;
+        lastMidpoint = null;
+
+        addPoint(getPoint(event));
+
+        status.textContent =
+          "Drawing | Input: " + event.pointerType;
+      });
+
+      canvas.addEventListener("pointermove", event => {
+        if (!drawing ||
+            event.pointerId !== activePointer) {
+          return;
+        }
+
+        event.preventDefault();
+
+        // Use extra samples when the browser provides them.
+        let samples = [];
+
+        if (typeof event.getCoalescedEvents === "function") {
+          try {
+            samples = event.getCoalescedEvents();
+          } catch (_) {}
+        }
+
+        if (!samples || samples.length === 0) {
+          samples = [event];
+        }
+
+        for (const sample of samples) {
+          addPoint(getPoint(sample));
+        }
+
+        // Avoid updating interface text on every movement.
+        const now = Date.now();
+        if (now - lastStatusUpdate > 500) {
+          status.textContent = "Drawing...";
+          lastStatusUpdate = now;
+        }
+      });
+
+      canvas.addEventListener("pointerup", event => {
+        if (!drawing ||
+            event.pointerId !== activePointer) {
+          return;
+        }
+
+        // Include the final pointer position.
+        addPoint(getPoint(event));
+        finishStroke();
+      });
+
+      canvas.addEventListener("pointercancel", () => {
+        if (drawing) finishStroke();
+      });
+
+      clearButton.addEventListener("click", () => {
+        if (drawing) return;
+
+        const rect = canvas.getBoundingClientRect();
+
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, rect.width, rect.height);
+        ctx.fillStyle = "#fff";
+
+        strokeCount = 0;
+        status.textContent = "Canvas cleared.";
+      });
+
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+    })();
   </script>
 </body>
 </html>
