@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>KindleDraw — Input Test</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: white;
+      color: black;
+      font: 16px sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      border-bottom: 1px solid black;
+    }
+    button {
+      background: white;
+      color: black;
+      border: 1px solid black;
+      padding: 10px 16px;
+      font-size: 16px;
+    }
+    #status {
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: calc(100vh - 105px);
+      touch-action: none;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>KindleDraw</strong>
+    <button id="clear">Clear</button>
+  </header>
+  <div id="status">Touch or use your pen to draw.</div>
+  <canvas id="board"></canvas>
+
+  <script>
+    const canvas = document.querySelector("#board");
+    const ctx = canvas.getContext("2d");
+    const status = document.querySelector("#status");
+
+    let drawing = false;
+    let previous = null;
+
+    function resize() {
+      const old = document.createElement("canvas");
+      old.width = canvas.width;
+      old.height = canvas.height;
+      old.getContext("2d").drawImage(canvas, 0, 0);
+
+      const rect = canvas.getBoundingClientRect();
+      const scale = Math.min(window.devicePixelRatio || 1, 2);
+
+      canvas.width = Math.round(rect.width * scale);
+      canvas.height = Math.round(rect.height * scale);
+
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(old, 0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 2 * scale;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+    }
+
+    function point(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      return {
+        x: (e.clientX - rect.left) * scale,
+        y: (e.clientY - rect.top) * scale
+      };
+    }
+
+    canvas.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      drawing = true;
+      previous = point(e);
+      canvas.setPointerCapture(e.pointerId);
+
+      status.textContent =
+        "Input detected: " + e.pointerType +
+        (e.pressure ? " | pressure: " +
+          e.pressure.toFixed(2) : "");
+    });
+
+    canvas.addEventListener("pointermove", e => {
+      if (!drawing) return;
+      e.preventDefault();
+
+      const p = point(e);
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      previous = p;
+    });
+
+    function stop() {
+      drawing = false;
+      previous = null;
+    }
+
+    canvas.addEventListener("pointerup", stop);
+    canvas.addEventListener("pointercancel", stop);
+
+    document.querySelector("#clear").onclick = () => {
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      status.textContent = "Canvas cleared.";
+    };
+
+    window.addEventListener("resize", resize);
+    resize();
+  </script>
+</body>
+</html>
