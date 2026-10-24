@@ -2,267 +2,201 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1,
-                 maximum-scale=1, user-scalable=no">
-  <title>KindleDraw Input Diagnostic</title>
-
-  <style>
-    * { box-sizing: border-box; }
-
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: white;
-      color: black;
-      font-family: sans-serif;
-    }
-
-    header {
-      padding: 10px;
-      border-bottom: 2px solid black;
-    }
-
-    h3 { margin: 0 0 6px; }
-
-    #stats {
-      padding: 10px;
-      font-size: 14px;
-      line-height: 1.65;
-      border-bottom: 1px solid black;
-    }
-
-    #board {
-      display: block;
-      width: 100%;
-      height: 45vh;
-      touch-action: none;
-      background: white;
-    }
-
-    button {
-      padding: 9px 14px;
-      background: white;
-      border: 1px solid black;
-      font-size: 15px;
-    }
-
-    #instructions {
-      padding: 10px;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .value { font-weight: bold; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>KindleDraw Input Test 2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:15px sans-serif;color:#000;background:#fff}
+header{padding:10px;border-bottom:1px solid}
+#stats{padding:10px;line-height:1.7;font-size:14px}
+#board{display:block;width:100%;height:42vh;border-top:1px solid;border-bottom:1px solid;touch-action:none}
+button{padding:10px 14px;background:white;border:1px solid black;font-size:15px}
+p{padding:0 10px;line-height:1.5}
+</style>
 </head>
-
 <body>
-  <header>
-    <h3>KindleDraw — Input Diagnostic</h3>
-    Draw continuously in the box below.
-  </header>
+<header><strong>KindleDraw — Input Test 2</strong></header>
+<div id="stats">
+Pointer type: <b id="type">—</b><br>
+Pointer moves: <b id="moves">0</b><br>
+Move event rate: <b id="rate">0</b>/s<br>
+Coalesced API: <b id="coalapi">—</b><br>
+Samples per move: <b id="samples">—</b><br>
+Sample rate: <b id="samplerate">—</b><br>
+Raw update events: <b id="raw">0</b><br>
+Raw update API: <b id="rawapi">—</b><br>
+Average event gap: <b id="gap">—</b><br>
+Largest event gap: <b id="maxgap">—</b>
+</div>
+<canvas id="board"></canvas>
+<p>
+Draw slowly for 5 seconds, then quickly for 5 seconds.
+Try to keep each stroke continuous. Read the numbers after
+both tests. The counters measure browser events, not screen pixels.
+</p>
+<p><button id="reset">Reset test</button></p>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $("board");
+  const ctx = canvas.getContext("2d");
+  let active = false, pointer = null, last = null;
+  let moves = 0, raw = 0, samples = 0;
+  let sampleTimes = [];
+  let eventGaps = [], lastEventTime = null;
+  let moveTimes = [];
 
-  <section id="stats">
-    <div>Pointer type: <span id="type" class="value">—</span></div>
-    <div>pointermove events: <span id="moves" class="value">0</span></div>
-    <div>Raw events: <span id="raw" class="value">0</span></div>
-    <div>Coalesced samples: <span id="samples" class="value">0</span></div>
-    <div>Average move interval: <span id="avg" class="value">—</span></div>
-    <div>Largest move gap: <span id="max" class="value">—</span></div>
-    <div>Move rate (last second): <span id="rate" class="value">0</span>/s</div>
-    <div>Largest render-frame gap: <span id="frame" class="value">—</span></div>
-    <div>Raw event support: <span id="support" class="value">checking</span></div>
-  </section>
+  $("coalapi").textContent =
+    typeof PointerEvent !== "undefined" &&
+    "getCoalescedEvents" in PointerEvent.prototype
+      ? "Available" : "Not exposed";
 
-  <canvas id="board"></canvas>
+  $("rawapi").textContent =
+    "onpointerrawupdate" in window
+      ? "API exposed" : "Not exposed";
 
-  <section id="instructions">
-    <button id="clear" type="button">Reset test</button>
-    <p>
-      1. Draw slowly for 5 seconds.<br>
-      2. Draw quickly for 5 seconds.<br>
-      3. Watch whether the ink appears in chunks.<br>
-      4. Read the numbers after drawing.
-    </p>
-    <p>
-      Keep the page open while drawing. Measurements update
-      periodically and may themselves add a little overhead.
-    </p>
-  </section>
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    const d = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(r.width * d);
+    canvas.height = Math.round(r.height * d);
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#000";
+    ctx.fillStyle = "#000";
+  }
 
-  <script>
-    (() => {
-      const $ = id => document.getElementById(id);
-      const canvas = $("board");
-      const ctx = canvas.getContext("2d", { alpha: false });
+  function getPoint(e) {
+    const r = canvas.getBoundingClientRect();
+    return {x:e.clientX-r.left,y:e.clientY-r.top};
+  }
 
-      let drawing = false;
-      let pointerId = null;
-      let previous = null;
-      let moveCount = 0;
-      let rawCount = 0;
-      let sampleCount = 0;
-      let lastMove = null;
-      let totalGap = 0;
-      let gapCount = 0;
-      let maxGap = 0;
-      let maxFrameGap = 0;
-      let lastFrame = null;
-      let moveTimes = [];
+  function draw(e) {
+    const p = getPoint(e);
+    if (last) {
+      ctx.beginPath();
+      ctx.moveTo(last.x,last.y);
+      ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,1.5,0,Math.PI*2);
+      ctx.fill();
+    }
+    last = p;
+  }
 
-      $("support").textContent =
-        "onpointerrawupdate" in window ? "Available" : "Not exposed";
+  canvas.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    active = true;
+    pointer = e.pointerId;
+    last = null;
+    $("type").textContent = e.pointerType;
+    try { canvas.setPointerCapture(pointer); } catch (_) {}
+    draw(e);
+  }, {passive:false});
 
-      function resize() {
-        const rect = canvas.getBoundingClientRect();
-        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.addEventListener("pointermove", e => {
+    if (!active || e.pointerId !== pointer) return;
+    e.preventDefault();
 
-        canvas.width = Math.max(1, Math.round(rect.width * ratio));
-        canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    const now = performance.now();
+    moves++;
+    moveTimes.push(now);
 
-        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, rect.width, rect.height);
-        ctx.strokeStyle = "black";
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
+    if (lastEventTime !== null) {
+      eventGaps.push(now-lastEventTime);
+    }
+    lastEventTime = now;
+
+    let list = [e];
+    if (typeof e.getCoalescedEvents === "function") {
+      try {
+        const coalesced = e.getCoalescedEvents();
+        if (coalesced.length) list = coalesced;
+      } catch (_) {}
+    }
+
+    for (const sample of list) {
+      samples++;
+      if (Number.isFinite(sample.timeStamp)) {
+        sampleTimes.push(sample.timeStamp);
       }
+      draw(sample);
+    }
+  }, {passive:false});
 
-      function point(e) {
-        const r = canvas.getBoundingClientRect();
-        return { x: e.clientX - r.left, y: e.clientY - r.top };
-      }
+  canvas.addEventListener("pointerrawupdate", e => {
+    if (active && e.pointerId === pointer) raw++;
+  });
 
-      function draw(e) {
-        const p = point(e);
+  function stop() {
+    active = false;
+    pointer = null;
+    last = null;
+    lastEventTime = null;
+  }
 
-        if (previous) {
-          ctx.beginPath();
-          ctx.moveTo(previous.x, previous.y);
-          ctx.lineTo(p.x, p.y);
-          ctx.stroke();
-        } else {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 1.2, 0, Math.PI * 2);
-          ctx.fillStyle = "black";
-          ctx.fill();
-        }
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
 
-        previous = p;
-      }
+  function average(values) {
+    return values.length
+      ? values.reduce((a,b)=>a+b,0)/values.length : null;
+  }
 
-      canvas.addEventListener("pointerdown", e => {
-        e.preventDefault();
-        drawing = true;
-        pointerId = e.pointerId;
-        previous = null;
+  function update() {
+    const now = performance.now();
+    moveTimes = moveTimes.filter(t=>now-t<=1000);
 
-        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    const avgGap = average(eventGaps);
+    const maxGap = eventGaps.length
+      ? Math.max(...eventGaps) : null;
 
-        $("type").textContent = e.pointerType;
-        draw(e);
-      }, { passive: false });
+    // Count distinct coalesced timestamps.
+    const distinct = [...new Set(sampleTimes)].sort((a,b)=>a-b);
+    const intervals = [];
+    for (let i=1;i<distinct.length;i++) {
+      intervals.push(distinct[i]-distinct[i-1]);
+    }
+    const avgSampleGap = average(intervals);
 
-      canvas.addEventListener("pointermove", e => {
-        if (!drawing || e.pointerId !== pointerId) return;
-        e.preventDefault();
+    $("moves").textContent = moves;
+    $("rate").textContent = moveTimes.length;
+    $("samples").textContent =
+      moves ? (samples/moves).toFixed(1) : "—";
+    $("samplerate").textContent =
+      avgSampleGap !== null && avgSampleGap > 0
+        ? (1000/avgSampleGap).toFixed(1)+" samples/s"
+        : "No distinct sample timing";
+    $("raw").textContent = raw;
+    $("gap").textContent =
+      avgGap !== null ? avgGap.toFixed(1)+" ms" : "—";
+    $("maxgap").textContent =
+      maxGap !== null ? maxGap.toFixed(1)+" ms" : "—";
+  }
 
-        const now = performance.now();
+  setInterval(update,500);
 
-        moveCount++;
-        moveTimes.push(now);
+  $("reset").addEventListener("click", () => {
+    active = false;
+    pointer = null;
+    last = null;
+    moves = raw = samples = 0;
+    sampleTimes = [];
+    eventGaps = [];
+    moveTimes = [];
+    lastEventTime = null;
+    resize();
+    update();
+  });
 
-        if (lastMove !== null) {
-          const gap = now - lastMove;
-          totalGap += gap;
-          gapCount++;
-          maxGap = Math.max(maxGap, gap);
-        }
-
-        lastMove = now;
-
-        let samples = 1;
-        if (typeof e.getCoalescedEvents === "function") {
-          try {
-            const list = e.getCoalescedEvents();
-            if (list.length) samples = list.length;
-          } catch (_) {}
-        }
-
-        sampleCount += samples;
-        draw(e);
-      }, { passive: false });
-
-      // Count raw events separately; do not draw twice.
-      canvas.addEventListener("pointerrawupdate", e => {
-        if (drawing && e.pointerId === pointerId) {
-          rawCount++;
-        }
-      });
-
-      function stop() {
-        drawing = false;
-        pointerId = null;
-        previous = null;
-        lastMove = null;
-      }
-
-      canvas.addEventListener("pointerup", stop);
-      canvas.addEventListener("pointercancel", stop);
-
-      function monitorFrames(now) {
-        if (lastFrame !== null) {
-          maxFrameGap = Math.max(maxFrameGap, now - lastFrame);
-        }
-
-        lastFrame = now;
-        requestAnimationFrame(monitorFrames);
-      }
-
-      requestAnimationFrame(monitorFrames);
-
-      function updateStats() {
-        const now = performance.now();
-        moveTimes = moveTimes.filter(t => now - t <= 1000);
-
-        $("moves").textContent = moveCount;
-        $("raw").textContent = rawCount;
-        $("samples").textContent = sampleCount;
-        $("avg").textContent = gapCount
-          ? (totalGap / gapCount).toFixed(1) + " ms"
-          : "—";
-        $("max").textContent = gapCount
-          ? maxGap.toFixed(1) + " ms"
-          : "—";
-        $("rate").textContent = moveTimes.length;
-        $("frame").textContent = maxFrameGap.toFixed(1) + " ms";
-      }
-
-      setInterval(updateStats, 500);
-
-      $("clear").addEventListener("click", () => {
-        drawing = false;
-        pointerId = null;
-        previous = null;
-        moveCount = 0;
-        rawCount = 0;
-        sampleCount = 0;
-        lastMove = null;
-        totalGap = 0;
-        gapCount = 0;
-        maxGap = 0;
-        moveTimes = [];
-
-        resize();
-        updateStats();
-      });
-
-      window.addEventListener("resize", resize);
-      resize();
-    })();
-  </script>
+  window.addEventListener("resize",resize);
+  resize();
+})();
+</script>
 </body>
 </html>
