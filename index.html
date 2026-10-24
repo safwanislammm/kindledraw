@@ -2,246 +2,277 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1,
-                 maximum-scale=1, user-scalable=no">
-  <title>KindleDraw</title>
-  <style>
-    * { box-sizing: border-box; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Scribe Ink</title>
 
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: white;
-      color: black;
-      font-family: sans-serif;
-    }
+<style>
+  * {
+    box-sizing: border-box;
+  }
 
-    #toolbar {
-      height: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 10px;
-      border-bottom: 1px solid black;
-    }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #fff;
+    font-family: system-ui, sans-serif;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
 
-    button {
-      height: 36px;
-      padding: 0 14px;
-      border: 1px solid black;
-      border-radius: 0;
-      background: white;
-      color: black;
-      font-size: 15px;
-    }
+  #toolbar {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+    border-bottom: 1px solid #ddd;
+    background: #fafafa;
+    color: #222;
+    font-size: 12px;
+  }
 
-    #status {
-      height: 26px;
-      padding: 5px 10px;
-      font-size: 12px;
-      border-bottom: 1px solid #ddd;
-    }
+  #title {
+    font-weight: 700;
+    font-size: 14px;
+  }
 
-    #board {
-      display: block;
-      width: 100%;
-      height: calc(100% - 74px);
-      background: white;
-      touch-action: none;
-    }
-  </style>
+  #stats {
+    margin-left: auto;
+    white-space: nowrap;
+    color: #555;
+  }
+
+  button {
+    border: 1px solid #bbb;
+    border-radius: 5px;
+    padding: 5px 10px;
+    background: white;
+    color: #222;
+    font-size: 12px;
+    touch-action: manipulation;
+  }
+
+  #paper {
+    display: block;
+    width: 100%;
+    height: calc(100% - 42px);
+    background: white;
+    touch-action: none;
+  }
+</style>
 </head>
+
 <body>
-  <header id="toolbar">
-    <strong>KindleDraw</strong>
-    <button id="clear" type="button">Clear</button>
-  </header>
+  <div id="toolbar">
+    <span id="title">Scribe Ink</span>
+    <button id="clear">Clear</button>
+    <span id="stats">Waiting for pen…</span>
+  </div>
 
-  <div id="status">Ready to draw.</div>
-  <canvas id="board"></canvas>
+  <canvas id="paper"></canvas>
 
-  <script>
-    (() => {
-      const canvas = document.getElementById("board");
-      const ctx = canvas.getContext("2d", {
-        alpha: false
-      });
-      const status = document.getElementById("status");
+<script>
+(() => {
+  const canvas = document.getElementById("paper");
+  const ctx = canvas.getContext("2d", {
+    alpha: false,
+    desynchronized: true
+  });
 
-      let drawing = false;
-      let pointerId = null;
-      let last = null;
-      let midpoint = null;
-      let strokes = 0;
+  const stats = document.getElementById("stats");
+  const clearButton = document.getElementById("clear");
 
-      function configure() {
-        ctx.strokeStyle = "#000";
-        ctx.fillStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
+  let drawing = false;
+  let activePointer = null;
+  let lastX = 0;
+  let lastY = 0;
+
+  // Keep the backing canvas relatively small to reduce rendering work.
+  // The CSS dimensions remain independent of this resolution.
+  let scale = 1;
+
+  let eventCount = 0;
+  let sampleCount = 0;
+  let windowStart = performance.now();
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+
+    // Preserve the existing drawing if the viewport changes.
+    const oldCanvas = document.createElement("canvas");
+    oldCanvas.width = canvas.width;
+    oldCanvas.height = canvas.height;
+
+    if (oldCanvas.width && oldCanvas.height) {
+      oldCanvas.getContext("2d").drawImage(canvas, 0, 0);
+    }
+
+    // Lower backing resolution can reduce work on slower browsers.
+    scale = Math.min(window.devicePixelRatio || 1, 1.5);
+
+    canvas.width = Math.max(1, Math.round(rect.width * scale));
+    canvas.height = Math.max(1, Math.round(rect.height * scale));
+
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    if (oldCanvas.width && oldCanvas.height) {
+      ctx.drawImage(
+        oldCanvas,
+        0, 0, oldCanvas.width, oldCanvas.height,
+        0, 0, rect.width, rect.height
+      );
+    }
+
+    ctx.strokeStyle = "#111111";
+    ctx.fillStyle = "#111111";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  }
+
+  function position(event) {
+    const rect = canvas.getBoundingClientRect();
+
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    };
+  }
+
+  function getSamples(event) {
+    // Browsers may combine many pen positions into one pointer event.
+    // Use those original positions when available.
+    if (typeof event.getCoalescedEvents === "function") {
+      try {
+        const samples = event.getCoalescedEvents();
+        if (samples && samples.length > 0) {
+          return samples;
+        }
+      } catch (_) {
+        // Fall back to the ordinary pointer event.
       }
+    }
 
-      function resize() {
-        const rect = canvas.getBoundingClientRect();
-        const scale = Math.min(
-          window.devicePixelRatio || 1, 2
-        );
+    return [event];
+  }
 
-        if (canvas.width === Math.round(rect.width * scale) &&
-            canvas.height === Math.round(rect.height * scale)) {
-          return;
-        }
+  function beginStroke(event) {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
 
-        const saved = document.createElement("canvas");
-        saved.width = canvas.width;
-        saved.height = canvas.height;
+    event.preventDefault();
 
-        if (saved.width && saved.height) {
-          saved.getContext("2d").drawImage(canvas, 0, 0);
-        }
+    drawing = true;
+    activePointer = event.pointerId;
 
-        canvas.width = Math.max(1, Math.round(rect.width * scale));
-        canvas.height = Math.max(1, Math.round(rect.height * scale));
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch (_) {}
 
-        ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        configure();
-        ctx.fillRect(0, 0, rect.width, rect.height);
+    const p = position(event);
+    lastX = p.x;
+    lastY = p.y;
 
-        if (saved.width && saved.height) {
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.drawImage(
-            saved, 0, 0, saved.width, saved.height,
-            0, 0, canvas.width, canvas.height
-          );
-          ctx.restore();
-          ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          configure();
-        }
-      }
+    // Draw a dot immediately, even for a tap.
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.fill();
 
-      function point(e) {
-        const rect = canvas.getBoundingClientRect();
-        return {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top
-        };
-      }
+    eventCount++;
+  }
 
-      function middle(a, b) {
-        return {
-          x: (a.x + b.x) / 2,
-          y: (a.y + b.y) / 2
-        };
-      }
+  function moveStroke(event) {
+    if (!drawing || event.pointerId !== activePointer) {
+      return;
+    }
 
-      // Render every movement as soon as JavaScript receives it.
-      function addPoint(p) {
-        if (!last) {
-          last = p;
-          midpoint = p;
+    event.preventDefault();
 
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, ctx.lineWidth / 2, 0, Math.PI * 2);
-          ctx.fill();
-          return;
-        }
+    const samples = getSamples(event);
 
-        const nextMid = middle(last, p);
+    eventCount++;
+    sampleCount += samples.length;
 
-        ctx.beginPath();
-        ctx.moveTo(midpoint.x, midpoint.y);
-        ctx.quadraticCurveTo(
-          last.x, last.y,
-          nextMid.x, nextMid.y
-        );
-        ctx.stroke();
+    // Draw every available point in this event immediately.
+    // No waiting for future points and no animation-frame queue.
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
 
-        last = p;
-        midpoint = nextMid;
-      }
+    for (const sample of samples) {
+      const p = position(sample);
+      ctx.lineTo(p.x, p.y);
+      lastX = p.x;
+      lastY = p.y;
+    }
 
-      function finish() {
-        if (last && midpoint) {
-          ctx.beginPath();
-          ctx.moveTo(midpoint.x, midpoint.y);
-          ctx.lineTo(last.x, last.y);
-          ctx.stroke();
-        }
+    ctx.stroke();
 
-        drawing = false;
-        pointerId = null;
-        last = null;
-        midpoint = null;
-        strokes++;
-        status.textContent = "Ready | Strokes: " + strokes;
-      }
+    updateStats();
+  }
 
-      canvas.addEventListener("pointerdown", e => {
-        if (drawing) return;
-        e.preventDefault();
+  function endStroke(event) {
+    if (event.pointerId !== activePointer) {
+      return;
+    }
 
-        drawing = true;
-        pointerId = e.pointerId;
-        last = null;
-        midpoint = null;
+    drawing = false;
+    activePointer = null;
+  }
 
-        try {
-          canvas.setPointerCapture(e.pointerId);
-        } catch (_) {}
+  function updateStats() {
+    const now = performance.now();
+    const elapsed = now - windowStart;
 
-        addPoint(point(e));
-        status.textContent = "Drawing...";
-      }, { passive: false });
+    if (elapsed < 1000) {
+      return;
+    }
 
-      canvas.addEventListener("pointermove", e => {
-        if (!drawing || e.pointerId !== pointerId) return;
-        e.preventDefault();
+    const eventRate = eventCount * 1000 / elapsed;
+    const sampleRate = sampleCount * 1000 / elapsed;
 
-        let events = [e];
+    stats.textContent =
+      `Events ${eventRate.toFixed(1)}/s · Samples ${sampleRate.toFixed(0)}/s`;
 
-        if (typeof e.getCoalescedEvents === "function") {
-          try {
-            const coalesced = e.getCoalescedEvents();
-            if (coalesced.length) events = coalesced;
-          } catch (_) {}
-        }
+    eventCount = 0;
+    sampleCount = 0;
+    windowStart = now;
+  }
 
-        for (const sample of events) {
-          addPoint(point(sample));
-        }
-      }, { passive: false });
+  canvas.addEventListener("pointerdown", beginStroke, {
+    passive: false
+  });
 
-      canvas.addEventListener("pointerup", e => {
-        if (!drawing || e.pointerId !== pointerId) return;
-        addPoint(point(e));
-        finish();
-      });
+  canvas.addEventListener("pointermove", moveStroke, {
+    passive: false
+  });
 
-      canvas.addEventListener("pointercancel", () => {
-        if (drawing) finish();
-      });
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+  canvas.addEventListener("lostpointercapture", () => {
+    drawing = false;
+    activePointer = null;
+  });
 
-      document.getElementById("clear").addEventListener("click", () => {
-        if (drawing) return;
+  clearButton.addEventListener("click", () => {
+    const rect = canvas.getBoundingClientRect();
 
-        const rect = canvas.getBoundingClientRect();
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, rect.width, rect.height);
-        configure();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, rect.width, rect.height);
 
-        strokes = 0;
-        status.textContent = "Canvas cleared.";
-      });
+    drawing = false;
+    activePointer = null;
+  });
 
-      window.addEventListener("resize", resize);
-      resize();
-    })();
-  </script>
+  window.addEventListener("resize", resizeCanvas);
+
+  resizeCanvas();
+})();
+</script>
 </body>
 </html>
